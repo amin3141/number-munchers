@@ -1,0 +1,9 @@
+.gradle/
+build/
+
+codex-desktop-agent/.venv/
+codex-desktop-agent/__pycache__/
+codex-desktop-agent/artifacts/
+
+*.class
+*.log

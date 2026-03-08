@@ -1,0 +1,39 @@
+plugins {
+    id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+group = 'com.pairsys'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+javafx {
+    version = '21.0.2'
+    modules = ['javafx.controls', 'javafx.graphics']
+}
+
+application {
+    mainClass = 'com.pairsys.numbermunchers.NumberMunchersApp'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('run') {
+    if (project.hasProperty('numberMunchers.debug.port')) {
+        systemProperty 'numberMunchers.debug.port', project.property('numberMunchers.debug.port')
+    }
+    if (project.hasProperty('numberMunchers.seed')) {
+        systemProperty 'numberMunchers.seed', project.property('numberMunchers.seed')
+    }
+}
