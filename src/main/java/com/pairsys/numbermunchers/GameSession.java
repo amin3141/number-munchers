@@ -40,6 +40,15 @@ public final class GameSession {
         clearBoard();
     }
 
+    public void restartCurrentRound(long seed) {
+        random = new Random(seed);
+        gameState.restartCurrentRound();
+        // Keep currentRule and currentLevelPlan - we're replaying the same round
+        playerPosition = null;
+        enemies.clear();
+        clearBoard();
+    }
+
     public void reseed(long seed) {
         random = new Random(seed);
     }

@@ -70,4 +70,13 @@ public final class GameState {
         gameOver = false;
         paused = false;
     }
+
+    public void restartCurrentRound() {
+        score = 0;
+        lives = 4;
+        // Keep the current round - don't reset to 1
+        edibleRemaining = 0;
+        gameOver = false;
+        paused = false;
+    }
 }

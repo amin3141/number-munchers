@@ -1157,7 +1157,7 @@ public class NumberMunchersApp extends Application {
     }
 
     private void resetGame() {
-        session.reset(seed);
+        session.restartCurrentRound(seed);
         soundEngine.playGameplayMusic();
         startRound();
     }
