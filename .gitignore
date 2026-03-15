@@ -1,9 +1,25 @@
+# Build outputs
 .gradle/
 build/
+*.class
+*.log
 
+# Desktop agent
 codex-desktop-agent/.venv/
 codex-desktop-agent/__pycache__/
 codex-desktop-agent/artifacts/
 
-*.class
-*.log
+# Asset source archives (not needed in repo)
+assets-*.zip
+assets-*/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# Claude Code
+.claude/
+
+# Windows artifacts
+nul

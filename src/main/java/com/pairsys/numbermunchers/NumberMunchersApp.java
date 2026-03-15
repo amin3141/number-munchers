@@ -753,6 +753,7 @@ public class NumberMunchersApp extends Application {
         resetRoundTimer();
         startEnemyLoop();
         startRoundTimerLoop();
+        showGraceCountdown();
     }
 
     private void resetRoundTimer() {
@@ -839,6 +840,7 @@ public class NumberMunchersApp extends Application {
         if (result.type() == GameSession.MunchResultType.CORRECT || result.type() == GameSession.MunchResultType.ROUND_CLEARED) {
             soundEngine.playChomp();
             pulseCell(boardViews[result.row()][result.col()].getRoot(), Color.web("#4edb86"));
+            spawnMunchParticles(result.col(), result.row());
         } else {
             soundEngine.playError();
             pulseCell(boardViews[result.row()][result.col()].getRoot(), Color.web("#ff5764"));
@@ -996,9 +998,97 @@ public class NumberMunchersApp extends Application {
         stopRoundTimerLoop();
         session.setGameOver(true);
         session.setPaused(false);
-        persistCurrentPlayerProgress();
-        showMessage(text + " - Press Enter", Color.web("#ffd3d3"), null);
+        boolean newHighScore = persistCurrentPlayerProgress();
+        shakeScreen();
+        flashScreen(Color.web("#ff3344"));
+        if (newHighScore) {
+            showHighScoreCelebration(text);
+        } else {
+            showMessage(text + " - Press Enter", Color.web("#ffd3d3"), null);
+        }
         updateHud();
+    }
+
+    private void showHighScoreCelebration(String gameOverText) {
+        messageText.setText("NEW HIGH SCORE!");
+        messageText.setFill(Color.web("#ffd700"));
+        messageText.setVisible(true);
+        messageText.setOpacity(1.0);
+
+        ScaleTransition pulse = new ScaleTransition(Duration.millis(300), messageText);
+        pulse.setFromX(0.5);
+        pulse.setFromY(0.5);
+        pulse.setToX(1.2);
+        pulse.setToY(1.2);
+        pulse.setCycleCount(2);
+        pulse.setAutoReverse(true);
+        pulse.setOnFinished(e -> {
+            messageText.setScaleX(1.0);
+            messageText.setScaleY(1.0);
+            showMessage(gameOverText + " - Press Enter", Color.web("#ffd3d3"), null);
+        });
+        pulse.play();
+
+        flashScreen(Color.web("#ffd700"));
+    }
+
+    private void shakeScreen() {
+        Timeline shake = new Timeline(
+                new KeyFrame(Duration.ZERO, new KeyValue(boardPane.translateXProperty(), 0)),
+                new KeyFrame(Duration.millis(50), new KeyValue(boardPane.translateXProperty(), -8)),
+                new KeyFrame(Duration.millis(100), new KeyValue(boardPane.translateXProperty(), 8)),
+                new KeyFrame(Duration.millis(150), new KeyValue(boardPane.translateXProperty(), -6)),
+                new KeyFrame(Duration.millis(200), new KeyValue(boardPane.translateXProperty(), 6)),
+                new KeyFrame(Duration.millis(250), new KeyValue(boardPane.translateXProperty(), -3)),
+                new KeyFrame(Duration.millis(300), new KeyValue(boardPane.translateXProperty(), 0))
+        );
+        shake.play();
+    }
+
+    private void flashScreen(Color color) {
+        Rectangle flash = new Rectangle(root.getWidth(), root.getHeight(), color);
+        flash.setMouseTransparent(true);
+        root.getChildren().add(flash);
+        FadeTransition fade = new FadeTransition(Duration.millis(300), flash);
+        fade.setFromValue(0.4);
+        fade.setToValue(0.0);
+        fade.setOnFinished(e -> root.getChildren().remove(flash));
+        fade.play();
+    }
+
+    private void spawnMunchParticles(int col, int row) {
+        double centerX = col * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0;
+        double centerY = row * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0;
+        Color[] colors = {Color.web("#4edb86"), Color.web("#7affb2"), Color.web("#fff176"), Color.web("#80ffea")};
+
+        for (int i = 0; i < 8; i++) {
+            double angle = (i / 8.0) * 2 * Math.PI;
+            double distance = 30 + Math.random() * 20;
+            double endX = centerX + Math.cos(angle) * distance;
+            double endY = centerY + Math.sin(angle) * distance;
+
+            javafx.scene.shape.Circle particle = new javafx.scene.shape.Circle(4, colors[i % colors.length]);
+            particle.setCenterX(centerX);
+            particle.setCenterY(centerY);
+            boardPane.getChildren().add(particle);
+
+            Timeline move = new Timeline(
+                    new KeyFrame(Duration.ZERO,
+                            new KeyValue(particle.centerXProperty(), centerX),
+                            new KeyValue(particle.centerYProperty(), centerY),
+                            new KeyValue(particle.opacityProperty(), 1.0),
+                            new KeyValue(particle.scaleXProperty(), 1.0),
+                            new KeyValue(particle.scaleYProperty(), 1.0)),
+                    new KeyFrame(Duration.millis(350),
+                            new KeyValue(particle.centerXProperty(), endX, Interpolator.EASE_OUT),
+                            new KeyValue(particle.centerYProperty(), endY, Interpolator.EASE_OUT),
+                            new KeyValue(particle.opacityProperty(), 0.0),
+                            new KeyValue(particle.scaleXProperty(), 0.3),
+                            new KeyValue(particle.scaleYProperty(), 0.3))
+            );
+            move.setOnFinished(e -> boardPane.getChildren().remove(particle));
+            move.play();
+        }
     }
 
     private void resetGame() {
@@ -1035,6 +1125,20 @@ public class NumberMunchersApp extends Application {
         if (onDone != null) {
             fade.setOnFinished(e -> onDone.run());
         }
+        fade.play();
+    }
+
+    private void showGraceCountdown() {
+        messageText.setText("GET READY!");
+        messageText.setFill(Color.web("#7aefff"));
+        messageText.setVisible(true);
+        messageText.setOpacity(1.0);
+
+        FadeTransition fade = new FadeTransition(Duration.millis(GameConfig.ROUND_START_GRACE_MILLIS - 200), messageText);
+        fade.setFromValue(1.0);
+        fade.setToValue(0.0);
+        fade.setDelay(Duration.millis(200));
+        fade.setOnFinished(e -> messageText.setVisible(false));
         fade.play();
     }
 
@@ -1398,9 +1502,12 @@ public class NumberMunchersApp extends Application {
         return PLAYER_OPTIONS.get(selectedPlayerIndex);
     }
 
-    private void persistCurrentPlayerProgress() {
+    private boolean persistCurrentPlayerProgress() {
         GameState gameState = session.getGameState();
-        progressStore.recordProgress(getSelectedPlayerName(), gameState.getScore(), gameState.getRound());
+        int currentScore = gameState.getScore();
+        int previousBest = progressStore.getProgress(getSelectedPlayerName()).topScore();
+        progressStore.recordProgress(getSelectedPlayerName(), currentScore, gameState.getRound());
+        return currentScore > previousBest && currentScore > 0;
     }
 
     private String playerProgressSummary(String playerName) {
