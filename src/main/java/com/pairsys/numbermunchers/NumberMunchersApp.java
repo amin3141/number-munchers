@@ -812,6 +812,7 @@ public class NumberMunchersApp extends Application {
                 result.position().col() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0,
                 result.position().row() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0
         );
+        soundEngine.playPlayerMove();
 
         ScaleTransition step = new ScaleTransition(Duration.millis(100), playerActor.getSprite());
         step.setToX(1.08);
@@ -952,6 +953,9 @@ public class NumberMunchersApp extends Application {
                     enemyPosition.col() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0,
                     enemyPosition.row() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0
             );
+        }
+        if (!enemyActors.isEmpty()) {
+            soundEngine.playEnemyMove();
         }
 
         if (collision) {

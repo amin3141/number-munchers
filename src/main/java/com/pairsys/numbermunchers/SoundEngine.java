@@ -19,6 +19,14 @@ public final class SoundEngine {
     private MediaPlayer titleMusicPlayer;
     private MediaPlayer gameplayMusicPlayer;
 
+    public void playPlayerMove() {
+        play(new double[] {880, 1100}, new int[] {25, 20}, 0.08);
+    }
+
+    public void playEnemyMove() {
+        play(new double[] {330, 280}, new int[] {30, 25}, 0.06);
+    }
+
     public void playChomp() {
         play(new double[] {740, 880, 690}, new int[] {35, 35, 45}, 0.18);
     }
