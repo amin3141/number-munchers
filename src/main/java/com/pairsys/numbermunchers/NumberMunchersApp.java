@@ -182,52 +182,87 @@ public class NumberMunchersApp extends Application {
         }
         hudLeft.getChildren().addAll(livesText, roundText, playerText);
 
-        // Arcade-style score display (upper right)
-        Text scoreLabel = new Text("SCORE");
-        scoreLabel.setFont(Font.font("Consolas", FontWeight.BOLD, 16));
-        scoreLabel.setFill(Color.web("#7ad4ff"));
+        // Arcade-style score display (upper right) - big and bold with glow
         scoreText = new Text("0");
-        scoreText.setFont(Font.font("Consolas", FontWeight.BOLD, 48));
+        scoreText.setFont(Font.font("Consolas", FontWeight.BOLD, 64));
         scoreText.setFill(Color.web("#ffea00"));
-        scoreText.setEffect(new Glow(0.6));
-        VBox scoreBox = new VBox(-2, scoreLabel, scoreText);
-        scoreBox.setAlignment(Pos.CENTER_RIGHT);
-        scoreBox.setPadding(new Insets(0, 20, 0, 0));
+        javafx.scene.effect.DropShadow scoreShadow = new javafx.scene.effect.DropShadow();
+        scoreShadow.setColor(Color.web("#ff6600"));
+        scoreShadow.setRadius(15);
+        scoreShadow.setSpread(0.4);
+        scoreText.setEffect(scoreShadow);
 
-        BorderPane hud = new BorderPane();
-        hud.setLeft(hudLeft);
-        hud.setRight(scoreBox);
+        Rectangle scoreBack = new Rectangle(180, 70, Color.web("#1a0a30"));
+        scoreBack.setArcWidth(16);
+        scoreBack.setArcHeight(16);
+        scoreBack.setStroke(Color.web("#ffaa00"));
+        scoreBack.setStrokeWidth(3);
 
-        Text timerLabel = new Text("ROUND TIMER");
-        timerLabel.setFont(Font.font("Trebuchet MS", FontWeight.BOLD, 16));
-        timerLabel.setFill(Color.web("#f7c96d"));
+        StackPane scoreBox = new StackPane(scoreBack, scoreText);
+        scoreBox.setAlignment(Pos.CENTER);
+
+        // Subtle idle glow animation on score
+        Timeline scoreGlow = new Timeline(
+                new KeyFrame(Duration.ZERO, new KeyValue(scoreShadow.radiusProperty(), 12)),
+                new KeyFrame(Duration.millis(800), new KeyValue(scoreShadow.radiusProperty(), 20, Interpolator.EASE_BOTH)),
+                new KeyFrame(Duration.millis(1600), new KeyValue(scoreShadow.radiusProperty(), 12, Interpolator.EASE_BOTH))
+        );
+        scoreGlow.setCycleCount(Animation.INDEFINITE);
+        scoreGlow.play();
+
+        // Arcade-style timer bar - big and dramatic like Street Fighter
+        Text timerLabel = new Text("TIME");
+        timerLabel.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 18));
+        timerLabel.setFill(Color.web("#ff9944"));
 
         timerText = new Text();
-        timerText.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
-        timerText.setFill(Color.web("#ffe9ab"));
+        timerText.setFont(Font.font("Consolas", FontWeight.BOLD, 28));
+        timerText.setFill(Color.web("#ffffff"));
+        javafx.scene.effect.DropShadow timerTextGlow = new javafx.scene.effect.DropShadow();
+        timerTextGlow.setColor(Color.web("#ff4400"));
+        timerTextGlow.setRadius(10);
+        timerTextGlow.setSpread(0.4);
+        timerText.setEffect(timerTextGlow);
 
-        Rectangle timerBarBack = new Rectangle(560, 18, Color.web("#182846"));
-        timerBarBack.setArcWidth(12);
-        timerBarBack.setArcHeight(12);
-        timerBarBack.setStroke(Color.web("#4f74bc"));
-        timerBarBack.setStrokeWidth(1.6);
+        Rectangle timerBarBack = new Rectangle(700, 36, Color.web("#0a0a18"));
+        timerBarBack.setArcWidth(6);
+        timerBarBack.setArcHeight(6);
+        timerBarBack.setStroke(Color.web("#ff6622"));
+        timerBarBack.setStrokeWidth(4);
+        javafx.scene.effect.DropShadow backGlow = new javafx.scene.effect.DropShadow();
+        backGlow.setColor(Color.web("#ff4400"));
+        backGlow.setRadius(8);
+        backGlow.setSpread(0.2);
+        timerBarBack.setEffect(backGlow);
 
-        timerBarFill = new Rectangle(560, 18, Color.web("#ffd44f"));
-        timerBarFill.setArcWidth(12);
-        timerBarFill.setArcHeight(12);
+        timerBarFill = new Rectangle(700, 36, Color.web("#ffdd00"));
+        timerBarFill.setArcWidth(4);
+        timerBarFill.setArcHeight(4);
+        javafx.scene.effect.DropShadow timerGlow = new javafx.scene.effect.DropShadow();
+        timerGlow.setColor(Color.web("#ffaa00"));
+        timerGlow.setRadius(18);
+        timerGlow.setSpread(0.6);
+        timerBarFill.setEffect(timerGlow);
 
         StackPane timerBarWrap = new StackPane(timerBarBack, timerBarFill);
         timerBarWrap.setAlignment(Pos.CENTER_LEFT);
         timerBarWrap.setMaxWidth(Region.USE_PREF_SIZE);
 
-        HBox timerRow = new HBox(12, timerLabel, timerBarWrap, timerText);
-        timerRow.setAlignment(Pos.CENTER_LEFT);
+        HBox timerRow = new HBox(16, timerLabel, timerBarWrap, timerText);
+        timerRow.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox scoreAndTimer = new VBox(12, scoreBox, timerRow);
+        scoreAndTimer.setAlignment(Pos.CENTER_RIGHT);
+
+        BorderPane hud = new BorderPane();
+        hud.setLeft(hudLeft);
+        hud.setRight(scoreAndTimer);
 
         Text controlsText = new Text("Move: Arrows/WASD   Eat: Space   Pause: P   Restart: Enter   Fullscreen: F11");
         controlsText.setFont(Font.font("Trebuchet MS", FontWeight.NORMAL, 16));
         controlsText.setFill(Color.web("#b7c9eb"));
 
-        topBox.getChildren().addAll(title, ruleText, hud, timerRow, controlsText);
+        topBox.getChildren().addAll(title, ruleText, hud, controlsText);
         root.setTop(topBox);
 
         boardPane = new Pane();
@@ -947,7 +982,7 @@ public class NumberMunchersApp extends Application {
 
     private void updateRoundTimerHud() {
         double fraction = Math.max(0.0, Math.min(1.0, 1.0 - ((double) roundTimerElapsedMillis / GameConfig.ROUND_TIMER_TOTAL_MILLIS)));
-        timerBarFill.setWidth(560 * fraction);
+        timerBarFill.setWidth(700 * fraction);
         if (fraction > 0.5) {
             timerBarFill.setFill(Color.web("#ffd44f"));
         } else if (fraction > 0.25) {

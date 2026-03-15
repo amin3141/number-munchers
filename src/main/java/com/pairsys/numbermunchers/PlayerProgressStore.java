@@ -2,6 +2,7 @@ package com.pairsys.numbermunchers;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 
@@ -22,15 +23,26 @@ public final class PlayerProgressStore {
         PlayerProgress current = getProgress(playerName);
         preferences.putInt(keyFor(playerName) + SCORE_SUFFIX, Math.max(current.topScore(), score));
         preferences.putInt(keyFor(playerName) + LEVEL_SUFFIX, Math.max(current.maxLevelReached(), maxLevelReached));
+        try {
+            preferences.flush();
+        } catch (BackingStoreException ignored) {
+            // Best effort
+        }
     }
 
     public List<PlayerProgress> leaderboard(List<String> playerNames, int limit) {
         return playerNames.stream()
                 .map(this::getProgress)
-                .sorted(Comparator
-                        .comparingInt(PlayerProgress::topScore).reversed()
-                        .thenComparingInt(PlayerProgress::maxLevelReached).reversed()
-                        .thenComparing(PlayerProgress::playerName))
+                .sorted((a, b) -> {
+                    // Sort by score descending
+                    int scoreCompare = Integer.compare(b.topScore(), a.topScore());
+                    if (scoreCompare != 0) return scoreCompare;
+                    // Then by level descending
+                    int levelCompare = Integer.compare(b.maxLevelReached(), a.maxLevelReached());
+                    if (levelCompare != 0) return levelCompare;
+                    // Then by name ascending
+                    return a.playerName().compareTo(b.playerName());
+                })
                 .limit(limit)
                 .collect(Collectors.toList());
     }
