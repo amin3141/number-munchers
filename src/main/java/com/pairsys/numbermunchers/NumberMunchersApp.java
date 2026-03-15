@@ -122,7 +122,17 @@ public class NumberMunchersApp extends Application {
         stage.setMaximized(true);
         stage.show();
         stage.setFullScreen(true);
-        root.requestFocus();
+
+        // Ensure keyboard focus after fullscreen transition and when window gains focus
+        stage.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                scene.getRoot().requestFocus();
+            }
+        });
+        Platform.runLater(() -> {
+            stage.requestFocus();
+            scene.getRoot().requestFocus();
+        });
 
         startDebugServer();
     }
