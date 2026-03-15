@@ -3,11 +3,8 @@ package com.pairsys.numbermunchers;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
-import java.util.Set;
 import javafx.animation.Animation;
 import javafx.animation.FadeTransition;
 import javafx.animation.Interpolator;
@@ -17,6 +14,7 @@ import javafx.animation.RotateTransition;
 import javafx.animation.ScaleTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Group;
@@ -29,6 +27,8 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.CornerRadii;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -42,56 +42,85 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 
 public class NumberMunchersApp extends Application {
-    private Random random;
+    private static final List<String> PLAYER_OPTIONS = List.of(
+            "Hamza", "Yusef", "Mohammed", "Abeera", "Amina", "Mariam",
+            "Mustafa", "Zahra", "Zhaley", "Palwasha", "Zarghuna"
+    );
+
     private long seed;
     private final int debugPort = Integer.getInteger("numberMunchers.debug.port", 8765);
     private final String sessionId = System.getenv().getOrDefault("NUMBER_MUNCHERS_SESSION_ID", "unknown");
     private final long startedAt = parseLong(System.getenv("NUMBER_MUNCHERS_STARTED_AT"), System.currentTimeMillis());
     private final String buildVersion = System.getenv().getOrDefault("NUMBER_MUNCHERS_BUILD_VERSION", "unknown");
-    private final BoardCell[][] board = new BoardCell[GameConfig.ROWS][GameConfig.COLS];
+    private final GameSession session = new GameSession(GameConfig.ROWS, GameConfig.COLS);
     private final BoardCellView[][] boardViews = new BoardCellView[GameConfig.ROWS][GameConfig.COLS];
-    private final List<EnemyActor> enemies = new ArrayList<>();
+    private final List<EnemyActor> enemyActors = new ArrayList<>();
     private final SoundEngine soundEngine = new SoundEngine();
-    private final GameState gameState = new GameState();
+    private final PlayerProgressStore progressStore = new PlayerProgressStore();
 
-    private final Font titleFont = Font.font("Garamond", FontWeight.BOLD, 36);
-    private final Font hudFont = Font.font("Trebuchet MS", FontWeight.SEMI_BOLD, 22);
-    private final Font valueFont = Font.font("Consolas", FontWeight.BOLD, 24);
-    private final Font cellFont = Font.font("Segoe UI", FontWeight.BOLD, 22);
+    private final Font titleFont = Font.font("Garamond", FontWeight.BOLD, 38);
+    private final Font hudFont = Font.font("Trebuchet MS", FontWeight.SEMI_BOLD, 24);
+    private final Font valueFont = Font.font("Consolas", FontWeight.BOLD, 30);
+    private final Font cellFont = Font.font("Segoe UI", FontWeight.BOLD, 28);
 
     private BorderPane root;
+    private VBox topBox;
     private Pane boardPane;
+    private StackPane centerPane;
+    private StackPane startOverlay;
+    private VBox titleMenuList;
+    private VBox playerSelectList;
+    private Text startOverlayHeader;
+    private Text startOverlaySubtitle;
+    private Text startOverlayHint;
+    private Text startOverlayStatus;
+    private VBox leaderboardEntries;
+    private Text leaderboardFooter;
     private Text ruleText;
     private Text scoreText;
     private Text livesText;
     private Text roundText;
+    private Text playerText;
+    private Text timerText;
     private Text messageText;
+    private final List<Text> playerOptionTexts = new ArrayList<>();
+    private Rectangle timerBarFill;
 
-    private Rule rule;
-    private PlayerActor player;
+    private PlayerActor playerActor;
     private Timeline enemyLoop;
+    private Timeline roundTimerLoop;
+    private Timeline frontScreenPulse;
     private GameDebugServer debugServer;
     private Stage stage;
     private long roundStartGraceEndsAt;
     private long roundStartedAt;
     private long enemyMovementEnabledAt;
     private long lastStateTimestamp;
+    private long roundTimerElapsedMillis;
+    private long lastRoundTimerTickAt;
+    private int roundTimerPoints;
+    private boolean startScreenActive = true;
+    private FrontScreenMode frontScreenMode = FrontScreenMode.TITLE;
+    private int titleMenuIndex = 0;
+    private int selectedPlayerIndex = 0;
 
     @Override
     public void start(Stage stage) {
         this.stage = stage;
         seed = Long.getLong("numberMunchers.seed", System.currentTimeMillis());
-        random = new Random(seed);
 
         setupLayout();
-        startRound();
+        showStartScreen();
 
         Scene scene = new Scene(root, GameConfig.WIDTH, GameConfig.HEIGHT, Color.web("#0a1023"));
         registerInput(scene);
 
         stage.setTitle("Number Munchers Deluxe");
+        stage.setFullScreenExitHint("");
         stage.setScene(scene);
+        stage.setMaximized(true);
         stage.show();
+        stage.setFullScreen(true);
 
         startDebugServer();
     }
@@ -115,7 +144,7 @@ public class NumberMunchersApp extends Application {
         root.setPadding(new Insets(18));
         root.setBackground(new Background(new BackgroundFill(Color.web("#0a1023"), CornerRadii.EMPTY, Insets.EMPTY)));
 
-        VBox topBox = new VBox(8);
+        topBox = new VBox(8);
         topBox.setPadding(new Insets(8, 4, 16, 4));
         topBox.setAlignment(Pos.CENTER_LEFT);
 
@@ -132,24 +161,55 @@ public class NumberMunchersApp extends Application {
         scoreText = new Text();
         livesText = new Text();
         roundText = new Text();
-        for (Text text : Arrays.asList(scoreText, livesText, roundText)) {
+        playerText = new Text();
+        for (Text text : Arrays.asList(scoreText, livesText, roundText, playerText)) {
             text.setFont(hudFont);
             text.setFill(Color.web("#f9f2d4"));
         }
-        hud.getChildren().addAll(scoreText, livesText, roundText);
+        hud.getChildren().addAll(scoreText, livesText, roundText, playerText);
 
-        Text controlsText = new Text("Move: Arrows/WASD   Eat: Space   Pause: P   Restart: Enter");
+        Text timerLabel = new Text("ROUND TIMER");
+        timerLabel.setFont(Font.font("Trebuchet MS", FontWeight.BOLD, 16));
+        timerLabel.setFill(Color.web("#f7c96d"));
+
+        timerText = new Text();
+        timerText.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
+        timerText.setFill(Color.web("#ffe9ab"));
+
+        Rectangle timerBarBack = new Rectangle(560, 18, Color.web("#182846"));
+        timerBarBack.setArcWidth(12);
+        timerBarBack.setArcHeight(12);
+        timerBarBack.setStroke(Color.web("#4f74bc"));
+        timerBarBack.setStrokeWidth(1.6);
+
+        timerBarFill = new Rectangle(560, 18, Color.web("#ffd44f"));
+        timerBarFill.setArcWidth(12);
+        timerBarFill.setArcHeight(12);
+
+        StackPane timerBarWrap = new StackPane(timerBarBack, timerBarFill);
+        timerBarWrap.setAlignment(Pos.CENTER_LEFT);
+        timerBarWrap.setMaxWidth(Region.USE_PREF_SIZE);
+
+        HBox timerRow = new HBox(12, timerLabel, timerBarWrap, timerText);
+        timerRow.setAlignment(Pos.CENTER_LEFT);
+
+        Text controlsText = new Text("Move: Arrows/WASD   Eat: Space   Pause: P   Restart: Enter   Fullscreen: F11");
         controlsText.setFont(Font.font("Trebuchet MS", FontWeight.NORMAL, 16));
         controlsText.setFill(Color.web("#b7c9eb"));
 
-        topBox.getChildren().addAll(title, ruleText, hud, controlsText);
+        topBox.getChildren().addAll(title, ruleText, hud, timerRow, controlsText);
         root.setTop(topBox);
 
         boardPane = new Pane();
         boardPane.setPrefSize(GameConfig.COLS * GameConfig.CELL_SIZE, GameConfig.ROWS * GameConfig.CELL_SIZE);
+        boardPane.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        boardPane.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
         boardPane.setBackground(new Background(new BackgroundFill(Color.web("#101b36"), CornerRadii.EMPTY, Insets.EMPTY)));
         buildBoard();
-        root.setCenter(centered(boardPane));
+        centerPane = centered(boardPane);
+        startOverlay = createStartOverlay();
+        centerPane.getChildren().add(startOverlay);
+        root.setCenter(centerPane);
 
         messageText = new Text();
         messageText.setFont(Font.font("Palatino Linotype", FontWeight.BOLD, 40));
@@ -164,15 +224,341 @@ public class NumberMunchersApp extends Application {
         return wrap;
     }
 
+    private StackPane createStartOverlay() {
+        StackPane overlay = new StackPane();
+        overlay.setPickOnBounds(true);
+        overlay.setBackground(new Background(new BackgroundFill(Color.rgb(4, 8, 19, 0.78), CornerRadii.EMPTY, Insets.EMPTY)));
+
+        VBox content = new VBox(30);
+        content.setAlignment(Pos.TOP_CENTER);
+        content.setMaxWidth(1380);
+        content.setPadding(new Insets(28, 44, 30, 44));
+
+        VBox marquee = new VBox(8);
+        marquee.setAlignment(Pos.CENTER);
+        marquee.setMaxWidth(1260);
+
+        Text bootText = new Text("PAIR SYSTEMS PRESENTS");
+        bootText.setFont(Font.font("Consolas", FontWeight.BOLD, 20));
+        bootText.setFill(Color.web("#7df2d6"));
+
+        Text versusLine = new Text("ARCADE MATH BATTLE");
+        versusLine.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 28));
+        versusLine.setFill(Color.web("#ff8f70"));
+        versusLine.setStroke(Color.web("#3a0c1a"));
+        versusLine.setStrokeWidth(0.8);
+
+        Text title = new Text("NUMBER MUNCHERS");
+        title.setFont(Font.font("Garamond", FontWeight.BOLD, 108));
+        title.setFill(Color.web("#ffe5a1"));
+        title.setStroke(Color.web("#50bfff"));
+        title.setStrokeWidth(1.5);
+
+        Text deluxe = new Text("DELUXE");
+        deluxe.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 44));
+        deluxe.setFill(Color.web("#fff7d1"));
+        deluxe.setStroke(Color.web("#b2432d"));
+        deluxe.setStrokeWidth(1.1);
+
+        Rectangle accentBar = new Rectangle(1040, 12, Color.web("#17417e"));
+        accentBar.setArcWidth(12);
+        accentBar.setArcHeight(12);
+        accentBar.setStroke(Color.web("#5fd0ff"));
+        accentBar.setStrokeWidth(2);
+
+        startOverlaySubtitle = new Text();
+        startOverlaySubtitle.setWrappingWidth(1040);
+        startOverlaySubtitle.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        startOverlaySubtitle.setFont(Font.font("Trebuchet MS", FontWeight.BOLD, 24));
+        startOverlaySubtitle.setFill(Color.web("#d7e6ff"));
+
+        marquee.getChildren().addAll(bootText, versusLine, title, deluxe, accentBar, startOverlaySubtitle);
+
+        HBox lowerDeck = new HBox(42);
+        lowerDeck.setAlignment(Pos.TOP_CENTER);
+
+        VBox selectorCard = new VBox(14);
+        selectorCard.setPrefWidth(600);
+        selectorCard.setPadding(new Insets(24, 28, 26, 28));
+        selectorCard.setBackground(new Background(new BackgroundFill(Color.rgb(8, 23, 55, 0.92), new CornerRadii(22), Insets.EMPTY)));
+        selectorCard.setStyle("-fx-border-color: #6bc8ff; -fx-border-width: 3; -fx-border-radius: 22;");
+
+        startOverlayHeader = new Text();
+        startOverlayHeader.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 38));
+        startOverlayHeader.setFill(Color.web("#fff1af"));
+
+        startOverlayHint = new Text();
+        startOverlayHint.setWrappingWidth(530);
+        startOverlayHint.setFont(Font.font("Trebuchet MS", FontWeight.NORMAL, 18));
+        startOverlayHint.setFill(Color.web("#b9cfff"));
+
+        titleMenuList = new VBox(12);
+        titleMenuList.getChildren().addAll(
+                createMenuOptionText(),
+                createMenuOptionText(),
+                createMenuOptionText()
+        );
+
+        playerSelectList = new VBox(7);
+        for (String playerName : PLAYER_OPTIONS) {
+            Text option = new Text();
+            option.setFont(Font.font("Trebuchet MS", FontWeight.BOLD, 24));
+            playerOptionTexts.add(option);
+            playerSelectList.getChildren().add(option);
+        }
+
+        startOverlayStatus = new Text();
+        startOverlayStatus.setWrappingWidth(530);
+        startOverlayStatus.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
+        startOverlayStatus.setFill(Color.web("#7df2d6"));
+
+        Rectangle selectorDivider = new Rectangle(540, 2, Color.web("#2d5e9a"));
+        selectorDivider.setOpacity(0.8);
+
+        selectorCard.getChildren().addAll(startOverlayHeader, startOverlayHint, selectorDivider, titleMenuList, playerSelectList, startOverlayStatus);
+
+        VBox right = new VBox(16);
+        right.setAlignment(Pos.TOP_LEFT);
+        right.setPrefWidth(470);
+        HBox.setHgrow(right, Priority.NEVER);
+
+        Text leaderboardTitle = new Text("CHAMPION BOARD");
+        leaderboardTitle.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 34));
+        leaderboardTitle.setFill(Color.web("#96dcff"));
+
+        Text leaderboardSubtitle = new Text("Real player records, stored per user. Score leads, then furthest level reached breaks ties.");
+        leaderboardSubtitle.setWrappingWidth(470);
+        leaderboardSubtitle.setFont(Font.font("Trebuchet MS", FontWeight.NORMAL, 18));
+        leaderboardSubtitle.setFill(Color.web("#b5d1ff"));
+
+        VBox leaderboardShot = new VBox(10);
+        leaderboardShot.setPadding(new Insets(22));
+        leaderboardShot.setBackground(new Background(new BackgroundFill(Color.rgb(28, 18, 46, 0.93), new CornerRadii(24), Insets.EMPTY)));
+        leaderboardShot.setStyle("-fx-border-color: #ffd15b; -fx-border-width: 3; -fx-border-radius: 24;");
+
+        Text shotHeader = new Text("★ TOP SCORES ★");
+        shotHeader.setFont(Font.font("Consolas", FontWeight.BOLD, 20));
+        shotHeader.setFill(Color.web("#ffd777"));
+
+        leaderboardEntries = new VBox(10);
+        leaderboardFooter = new Text();
+        leaderboardFooter.setWrappingWidth(410);
+        leaderboardFooter.setFont(Font.font("Trebuchet MS", FontWeight.NORMAL, 15));
+        leaderboardFooter.setFill(Color.web("#b6bedb"));
+
+        leaderboardShot.getChildren().addAll(shotHeader, leaderboardEntries, leaderboardFooter);
+
+        right.getChildren().addAll(leaderboardTitle, leaderboardSubtitle, leaderboardShot);
+
+        lowerDeck.getChildren().addAll(selectorCard, right);
+        content.getChildren().addAll(marquee, lowerDeck);
+        overlay.getChildren().add(content);
+        frontScreenPulse = new Timeline(
+                new KeyFrame(Duration.ZERO,
+                        new KeyValue(title.scaleXProperty(), 1.0),
+                        new KeyValue(title.scaleYProperty(), 1.0),
+                        new KeyValue(bootText.opacityProperty(), 0.72)),
+                new KeyFrame(Duration.millis(520),
+                        new KeyValue(title.scaleXProperty(), 1.035, Interpolator.EASE_BOTH),
+                        new KeyValue(title.scaleYProperty(), 1.035, Interpolator.EASE_BOTH),
+                        new KeyValue(bootText.opacityProperty(), 1.0, Interpolator.EASE_BOTH)),
+                new KeyFrame(Duration.millis(1040),
+                        new KeyValue(title.scaleXProperty(), 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(title.scaleYProperty(), 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(bootText.opacityProperty(), 0.72, Interpolator.EASE_BOTH))
+        );
+        frontScreenPulse.setCycleCount(Animation.INDEFINITE);
+        frontScreenPulse.play();
+        updateStartOverlay();
+        return overlay;
+    }
+
+    private Text createMenuOptionText() {
+        Text option = new Text();
+        option.setFont(Font.font("Trebuchet MS", FontWeight.BLACK, 34));
+        return option;
+    }
+
+    private HBox leaderboardHeader() {
+        Text rankHeader = new Text("#");
+        rankHeader.setFont(Font.font("Consolas", FontWeight.BOLD, 14));
+        rankHeader.setFill(Color.web("#7a8aaa"));
+        StackPane rankCol = new StackPane(rankHeader);
+        rankCol.setPrefWidth(32);
+        rankCol.setAlignment(Pos.CENTER_LEFT);
+
+        Text nameHeader = new Text("PLAYER");
+        nameHeader.setFont(Font.font("Consolas", FontWeight.BOLD, 14));
+        nameHeader.setFill(Color.web("#7a8aaa"));
+        StackPane nameCol = new StackPane(nameHeader);
+        nameCol.setPrefWidth(130);
+        nameCol.setAlignment(Pos.CENTER_LEFT);
+
+        Text scoreHeader = new Text("SCORE");
+        scoreHeader.setFont(Font.font("Consolas", FontWeight.BOLD, 14));
+        scoreHeader.setFill(Color.web("#7a8aaa"));
+        StackPane scoreCol = new StackPane(scoreHeader);
+        scoreCol.setPrefWidth(80);
+        scoreCol.setAlignment(Pos.CENTER_RIGHT);
+
+        Text levelHeader = new Text("LV");
+        levelHeader.setFont(Font.font("Consolas", FontWeight.BOLD, 14));
+        levelHeader.setFill(Color.web("#7a8aaa"));
+        StackPane levelCol = new StackPane(levelHeader);
+        levelCol.setPrefWidth(40);
+        levelCol.setAlignment(Pos.CENTER_RIGHT);
+
+        HBox header = new HBox(8, rankCol, nameCol, scoreCol, levelCol);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.setPadding(new Insets(0, 0, 6, 0));
+        return header;
+    }
+
+    private HBox leaderboardRow(int rank, String name, int score, int level, String accentColor) {
+        Text rankText = new Text(String.format("%d", rank));
+        rankText.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
+        rankText.setFill(Color.web(accentColor));
+        StackPane rankCol = new StackPane(rankText);
+        rankCol.setPrefWidth(32);
+        rankCol.setAlignment(Pos.CENTER_LEFT);
+
+        Text nameText = new Text(name);
+        nameText.setFont(Font.font("Trebuchet MS", FontWeight.SEMI_BOLD, 18));
+        nameText.setFill(Color.web("#edf0ff"));
+        StackPane nameCol = new StackPane(nameText);
+        nameCol.setPrefWidth(130);
+        nameCol.setAlignment(Pos.CENTER_LEFT);
+
+        Text scoreText = new Text(String.format("%,d", score));
+        scoreText.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
+        scoreText.setFill(Color.web("#8fd4ff"));
+        StackPane scoreCol = new StackPane(scoreText);
+        scoreCol.setPrefWidth(80);
+        scoreCol.setAlignment(Pos.CENTER_RIGHT);
+
+        Text levelText = new Text(String.valueOf(level));
+        levelText.setFont(Font.font("Consolas", FontWeight.BOLD, 18));
+        levelText.setFill(Color.web("#c4b5fd"));
+        StackPane levelCol = new StackPane(levelText);
+        levelCol.setPrefWidth(40);
+        levelCol.setAlignment(Pos.CENTER_RIGHT);
+
+        HBox row = new HBox(8, rankCol, nameCol, scoreCol, levelCol);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    private void updateStartOverlay() {
+        refreshLeaderboard();
+        if (frontScreenMode == FrontScreenMode.TITLE) {
+            startOverlayHeader.setText("PRESS START");
+            startOverlaySubtitle.setText("Munch the multiples, dodge the Troggles! Choose a player or jump right in.");
+            startOverlayHint.setText("Use arrow keys or W/S to navigate. Press Enter or Space to select.");
+            titleMenuList.setVisible(true);
+            titleMenuList.setManaged(true);
+            playerSelectList.setVisible(false);
+            playerSelectList.setManaged(false);
+            String[] options = {"START GAME", "PLAYER SELECT", "QUIT"};
+            for (int i = 0; i < titleMenuList.getChildren().size(); i++) {
+                Text option = (Text) titleMenuList.getChildren().get(i);
+                boolean selected = i == titleMenuIndex;
+                option.setText((selected ? ">> " : "   ") + options[i]);
+                option.setFill(selected ? Color.web("#fff4ad") : Color.web("#d1daf5"));
+                option.setOpacity(selected ? 1.0 : 0.76);
+                option.setStyle(selected ? "-fx-stroke: #56caff; -fx-stroke-width: 1.1;" : "");
+            }
+            startOverlayStatus.setText("◆ " + playerProgressSummary(getSelectedPlayerName()));
+        } else {
+            startOverlayHeader.setText("PLAYER SELECT");
+            startOverlaySubtitle.setText("Pick your character! Each muncher tracks their own high scores.");
+            startOverlayHint.setText("Use arrow keys or W/S to choose. Press Enter to confirm. Esc to go back.");
+            titleMenuList.setVisible(false);
+            titleMenuList.setManaged(false);
+            playerSelectList.setVisible(true);
+            playerSelectList.setManaged(true);
+            for (int i = 0; i < playerOptionTexts.size(); i++) {
+                Text option = playerOptionTexts.get(i);
+                boolean selected = i == selectedPlayerIndex;
+                option.setText((selected ? ">> " : "   ") + PLAYER_OPTIONS.get(i));
+                option.setFill(selected ? Color.web("#fff4ad") : Color.web("#d1daf5"));
+                option.setOpacity(selected ? 1.0 : 0.72);
+                option.setStyle(selected ? "-fx-stroke: #56caff; -fx-stroke-width: 1.0;" : "");
+            }
+            startOverlayStatus.setText("◆ " + playerProgressSummary(getSelectedPlayerName()));
+        }
+    }
+
+    private void showStartScreen() {
+        if (!startScreenActive) {
+            persistCurrentPlayerProgress();
+        }
+        startScreenActive = true;
+        frontScreenMode = FrontScreenMode.TITLE;
+        titleMenuIndex = 0;
+        clearActors();
+        session.reset(seed);
+        roundStartedAt = 0L;
+        roundStartGraceEndsAt = 0L;
+        enemyMovementEnabledAt = 0L;
+        messageText.setVisible(false);
+        topBox.setVisible(false);
+        topBox.setManaged(false);
+        startOverlay.setVisible(true);
+        startOverlay.setManaged(true);
+        stopRoundTimerLoop();
+        roundTimerElapsedMillis = 0L;
+        roundTimerPoints = GameConfig.ROUND_TIMER_START_POINTS;
+        lastRoundTimerTickAt = 0L;
+        updateRoundTimerHud();
+        refreshBoardViews();
+        updateHud();
+        updateStartOverlay();
+        soundEngine.playTitleMusic();
+    }
+
+    private void beginGameFromStartScreen() {
+        startScreenActive = false;
+        topBox.setVisible(true);
+        topBox.setManaged(true);
+        startOverlay.setVisible(false);
+        startOverlay.setManaged(false);
+        resetGame();
+    }
+
+    private void refreshLeaderboard() {
+        if (leaderboardEntries == null || leaderboardFooter == null) {
+            return;
+        }
+
+        leaderboardEntries.getChildren().clear();
+        leaderboardEntries.getChildren().add(leaderboardHeader());
+
+        List<PlayerProgress> standings = progressStore.leaderboard(PLAYER_OPTIONS, 5);
+        String[] accentColors = {"#77f7d2", "#9ad8ff", "#ffb8d3", "#d6d0ff", "#f4e1a1"};
+
+        for (int i = 0; i < standings.size(); i++) {
+            PlayerProgress progress = standings.get(i);
+            leaderboardEntries.getChildren().add(
+                    leaderboardRow(i + 1, progress.playerName(), progress.topScore(), progress.maxLevelReached(), accentColors[i % accentColors.length])
+            );
+        }
+
+        boolean hasRecords = standings.stream().anyMatch(progress -> progress.topScore() > 0 || progress.maxLevelReached() > 0);
+        if (hasRecords) {
+            leaderboardFooter.setText("Saved locally for this Windows user via Java Preferences.");
+        } else {
+            leaderboardFooter.setText("No saved records yet. Start a run and your family scoreboard will populate here.");
+        }
+    }
+
     private void buildBoard() {
         boardPane.getChildren().clear();
 
         for (int row = 0; row < GameConfig.ROWS; row++) {
             for (int col = 0; col < GameConfig.COLS; col++) {
-                BoardCell cell = new BoardCell(row, col, 1);
                 BoardCellView view = new BoardCellView(row, col, cellFont, valueFont);
-                board[row][col] = cell;
                 boardViews[row][col] = view;
+                view.refresh(session.getCell(row, col));
                 boardPane.getChildren().add(view.getRoot());
             }
         }
@@ -203,21 +589,40 @@ public class NumberMunchersApp extends Application {
         boardPane.getChildren().add(outerGrid);
     }
 
+    private void refreshBoardViews() {
+        BoardCell[][] board = session.getBoard();
+        for (int row = 0; row < GameConfig.ROWS; row++) {
+            for (int col = 0; col < GameConfig.COLS; col++) {
+                boardViews[row][col].refresh(board[row][col]);
+            }
+        }
+    }
+
     private void registerInput(Scene scene) {
         scene.setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.P) {
-                setPaused(!gameState.isPaused());
+            if (startScreenActive) {
+                handleFrontScreenInput(event.getCode());
                 return;
             }
 
-            if (gameState.isGameOver()) {
+            if (event.getCode() == KeyCode.F11) {
+                toggleFullScreen();
+                return;
+            }
+
+            if (event.getCode() == KeyCode.P) {
+                setPaused(!session.getGameState().isPaused());
+                return;
+            }
+
+            if (session.getGameState().isGameOver()) {
                 if (event.getCode() == KeyCode.ENTER) {
                     resetGame();
                 }
                 return;
             }
 
-            if (gameState.isPaused()) {
+            if (session.getGameState().isPaused()) {
                 return;
             }
 
@@ -244,117 +649,142 @@ public class NumberMunchersApp extends Application {
         });
     }
 
+    private void handleFrontScreenInput(KeyCode code) {
+        if (code == KeyCode.F11) {
+            toggleFullScreen();
+            return;
+        }
+        if (frontScreenMode == FrontScreenMode.TITLE) {
+            if (code == KeyCode.UP || code == KeyCode.W || code == KeyCode.LEFT || code == KeyCode.A) {
+                titleMenuIndex = Math.floorMod(titleMenuIndex - 1, 3);
+                updateStartOverlay();
+                return;
+            }
+            if (code == KeyCode.DOWN || code == KeyCode.S || code == KeyCode.RIGHT || code == KeyCode.D) {
+                titleMenuIndex = Math.floorMod(titleMenuIndex + 1, 3);
+                updateStartOverlay();
+                return;
+            }
+            if (code == KeyCode.ENTER || code == KeyCode.SPACE) {
+                confirmFrontSelection();
+            }
+            return;
+        }
+
+        if (code == KeyCode.ESCAPE || code == KeyCode.BACK_SPACE) {
+            frontScreenMode = FrontScreenMode.TITLE;
+            updateStartOverlay();
+            return;
+        }
+        if (code == KeyCode.UP || code == KeyCode.W || code == KeyCode.LEFT || code == KeyCode.A) {
+            selectedPlayerIndex = Math.floorMod(selectedPlayerIndex - 1, PLAYER_OPTIONS.size());
+            updateStartOverlay();
+            return;
+        }
+        if (code == KeyCode.DOWN || code == KeyCode.S || code == KeyCode.RIGHT || code == KeyCode.D) {
+            selectedPlayerIndex = Math.floorMod(selectedPlayerIndex + 1, PLAYER_OPTIONS.size());
+            updateStartOverlay();
+            return;
+        }
+        if (code == KeyCode.ENTER || code == KeyCode.SPACE) {
+            frontScreenMode = FrontScreenMode.TITLE;
+            titleMenuIndex = 0;
+            updateStartOverlay();
+        }
+    }
+
+    private void moveFrontSelection(int delta) {
+        if (!startScreenActive) {
+            return;
+        }
+        if (frontScreenMode == FrontScreenMode.TITLE) {
+            titleMenuIndex = Math.floorMod(titleMenuIndex + delta, 3);
+        } else {
+            selectedPlayerIndex = Math.floorMod(selectedPlayerIndex + delta, PLAYER_OPTIONS.size());
+        }
+        updateStartOverlay();
+    }
+
+    private void confirmFrontSelection() {
+        if (!startScreenActive) {
+            return;
+        }
+        if (frontScreenMode == FrontScreenMode.TITLE) {
+            if (titleMenuIndex == 0) {
+                beginGameFromStartScreen();
+            } else if (titleMenuIndex == 1) {
+                frontScreenMode = FrontScreenMode.PLAYER_SELECT;
+                updateStartOverlay();
+            } else {
+                Platform.exit();
+            }
+            return;
+        }
+
+        frontScreenMode = FrontScreenMode.TITLE;
+        titleMenuIndex = 0;
+        updateStartOverlay();
+    }
+
+    private void backFrontSelection() {
+        if (!startScreenActive || frontScreenMode != FrontScreenMode.PLAYER_SELECT) {
+            return;
+        }
+        frontScreenMode = FrontScreenMode.TITLE;
+        updateStartOverlay();
+    }
+
     private void startRound() {
+        startScreenActive = false;
+        topBox.setVisible(true);
+        topBox.setManaged(true);
+        startOverlay.setVisible(false);
+        startOverlay.setManaged(false);
         clearActors();
         messageText.setVisible(false);
-        gameState.setGameOver(false);
-        gameState.setPaused(false);
-
-        rule = Rule.randomRule(random, gameState.getRound());
-        ruleText.setText("Eat numbers that are " + rule.getDescription());
-
-        int edibleCount = 0;
-        for (int row = 0; row < GameConfig.ROWS; row++) {
-            for (int col = 0; col < GameConfig.COLS; col++) {
-                BoardCell cell = board[row][col];
-                int value = random.nextInt(99) + 1;
-                cell.setValue(value);
-                cell.setMunched(false);
-                cell.setEdible(rule.matches(value));
-                if (cell.isEdible()) {
-                    edibleCount++;
-                }
-                boardViews[row][col].refresh(cell);
-            }
-        }
-
-        int targetCells = GameConfig.MIN_TARGET_CELLS + random.nextInt(GameConfig.MAX_TARGET_CELLS - GameConfig.MIN_TARGET_CELLS + 1);
-        if (edibleCount > targetCells) {
-            edibleCount = trimEdibleCells(edibleCount, targetCells);
-        } else {
-            edibleCount = growEdibleCells(edibleCount, targetCells);
-        }
-        gameState.setEdibleRemaining(edibleCount);
-
-        player = new PlayerActor(
-                random.nextInt(GameConfig.ROWS),
-                random.nextInt(GameConfig.COLS),
-                SpriteFactory.createPlayerSprite()
-        );
-        boardPane.getChildren().add(player.getSprite());
-        player.placeInstant();
-        animateIdle(player.getSprite());
-
-        spawnEnemies();
+        LevelPlan levelPlan = session.startRound();
+        ruleText.setText("Eat numbers that are " + levelPlan.getRule().getDescription());
+        refreshBoardViews();
+        spawnVisualActors();
         updateHud();
         roundStartedAt = System.currentTimeMillis();
         roundStartGraceEndsAt = System.currentTimeMillis() + GameConfig.ROUND_START_GRACE_MILLIS;
         enemyMovementEnabledAt = roundStartGraceEndsAt;
+        resetRoundTimer();
         startEnemyLoop();
+        startRoundTimerLoop();
     }
 
-    private int trimEdibleCells(int current, int target) {
-        while (current > target) {
-            int row = random.nextInt(GameConfig.ROWS);
-            int col = random.nextInt(GameConfig.COLS);
-            BoardCell cell = board[row][col];
-            if (!cell.isEdible()) {
-                continue;
-            }
-            int value;
-            int tries = 0;
-            do {
-                value = random.nextInt(99) + 1;
-                tries++;
-            } while (rule.matches(value) && tries < 400);
+    private void resetRoundTimer() {
+        roundTimerElapsedMillis = 0L;
+        lastRoundTimerTickAt = System.currentTimeMillis();
+        roundTimerPoints = GameConfig.ROUND_TIMER_START_POINTS;
+        updateRoundTimerHud();
+    }
 
-            if (!rule.matches(value)) {
-                cell.setValue(value);
-                cell.setEdible(false);
-                boardViews[row][col].refresh(cell);
-                current--;
-            }
+    private void spawnVisualActors() {
+        GridPoint playerPosition = session.getPlayerPosition();
+        if (playerPosition == null) {
+            return;
         }
-        return current;
-    }
 
-    private int growEdibleCells(int current, int target) {
-        while (current < target) {
-            int row = random.nextInt(GameConfig.ROWS);
-            int col = random.nextInt(GameConfig.COLS);
-            BoardCell cell = board[row][col];
-            if (cell.isEdible()) {
-                continue;
-            }
-            cell.setValue(rule.generateMatching(random));
-            cell.setEdible(true);
-            boardViews[row][col].refresh(cell);
-            current++;
-        }
-        return current;
-    }
+        playerActor = new PlayerActor(
+                playerPosition.row(),
+                playerPosition.col(),
+                SpriteFactory.createPlayerSprite(getSelectedPlayerName())
+        );
+        boardPane.getChildren().add(playerActor.getSprite());
+        playerActor.placeInstant();
+        animateIdle(playerActor.getSprite());
 
-    private void spawnEnemies() {
-        int enemyCount = Math.min(2 + gameState.getRound() / 2, GameConfig.MAX_ENEMIES);
-        Set<Integer> occupied = new HashSet<>();
-        occupied.add(player.getRow() * GameConfig.COLS + player.getCol());
-
-        for (int i = 0; i < enemyCount; i++) {
-            int row;
-            int col;
-            int key;
-            do {
-                row = random.nextInt(GameConfig.ROWS);
-                col = random.nextInt(GameConfig.COLS);
-                key = row * GameConfig.COLS + col;
-            } while (occupied.contains(key));
-
-            occupied.add(key);
-            EnemyActor enemy = new EnemyActor(row, col, SpriteFactory.createEnemySprite(i));
-            enemies.add(enemy);
-            boardPane.getChildren().add(enemy.getSprite());
-            enemy.placeInstant();
-            animateEnemy(enemy.getSprite(), i);
+        List<GridPoint> enemies = session.getEnemies();
+        for (int i = 0; i < enemies.size(); i++) {
+            GridPoint enemyPosition = enemies.get(i);
+            EnemyActor enemyActor = new EnemyActor(enemyPosition.row(), enemyPosition.col(), SpriteFactory.createEnemySprite(i));
+            enemyActors.add(enemyActor);
+            boardPane.getChildren().add(enemyActor.getSprite());
+            enemyActor.placeInstant();
+            animateEnemy(enemyActor.getSprite(), i);
         }
     }
 
@@ -362,63 +792,63 @@ public class NumberMunchersApp extends Application {
         if (enemyLoop != null) {
             enemyLoop.stop();
         }
-        enemies.clear();
+        playerActor = null;
+        enemyActors.clear();
         boardPane.getChildren().removeIf(node -> node instanceof Group && "actor".equals(node.getUserData()));
     }
 
     private void movePlayer(int dRow, int dCol) {
-        if (gameState.isPaused() || gameState.isGameOver()) {
+        if (playerActor == null) {
+            return;
+        }
+        GameSession.MoveResult result = session.movePlayer(dRow, dCol);
+        if (!result.moved() || result.position() == null) {
             return;
         }
 
-        int nextRow = player.getRow() + dRow;
-        int nextCol = player.getCol() + dCol;
-        if (!inBounds(nextRow, nextCol)) {
-            return;
-        }
+        playerActor.setPosition(result.position().row(), result.position().col());
+        animateMove(
+                playerActor.getSprite(),
+                result.position().col() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0,
+                result.position().row() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0
+        );
 
-        player.setPosition(nextRow, nextCol);
-        animateMove(player.getSprite(), nextCol * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0, nextRow * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0);
-
-        ScaleTransition step = new ScaleTransition(Duration.millis(100), player.getSprite());
+        ScaleTransition step = new ScaleTransition(Duration.millis(100), playerActor.getSprite());
         step.setToX(1.08);
         step.setToY(0.92);
         step.setCycleCount(2);
         step.setAutoReverse(true);
         step.play();
 
-        checkCollisions();
+        if (result.collision()) {
+            soundEngine.playCaught();
+            endGame("A Troggle Got You");
+        }
     }
 
     private void munchCurrentCell() {
-        if (gameState.isPaused() || gameState.isGameOver()) {
+        GameSession.MunchResult result = session.munchCurrentCell();
+        if (result.type() == GameSession.MunchResultType.IGNORED || result.type() == GameSession.MunchResultType.ALREADY_MUNCHED) {
             return;
         }
 
-        BoardCell cell = board[player.getRow()][player.getCol()];
-        if (cell.isMunched()) {
-            return;
-        }
+        BoardCell cell = session.getCell(result.row(), result.col());
+        boardViews[result.row()][result.col()].refresh(cell);
 
-        cell.setMunched(true);
-        boardViews[player.getRow()][player.getCol()].refresh(cell);
-
-        if (cell.isEdible()) {
-            gameState.onCorrectMunch();
+        if (result.type() == GameSession.MunchResultType.CORRECT || result.type() == GameSession.MunchResultType.ROUND_CLEARED) {
             soundEngine.playChomp();
-            pulseCell(boardViews[player.getRow()][player.getCol()].getRoot(), Color.web("#4edb86"));
+            pulseCell(boardViews[result.row()][result.col()].getRoot(), Color.web("#4edb86"));
         } else {
-            gameState.onWrongMunch();
             soundEngine.playError();
-            pulseCell(boardViews[player.getRow()][player.getCol()].getRoot(), Color.web("#ff5764"));
-            if (gameState.getLives() <= 0) {
+            pulseCell(boardViews[result.row()][result.col()].getRoot(), Color.web("#ff5764"));
+            if (result.type() == GameSession.MunchResultType.OUT_OF_LIVES) {
                 soundEngine.playCaught();
                 endGame("Out Of Lives");
                 return;
             }
         }
 
-        if (gameState.getEdibleRemaining() <= 0) {
+        if (result.type() == GameSession.MunchResultType.ROUND_CLEARED) {
             soundEngine.playRoundClear();
             endRound();
             return;
@@ -446,43 +876,87 @@ public class NumberMunchersApp extends Application {
     }
 
     private void startEnemyLoop() {
-        enemyLoop = new Timeline(new KeyFrame(Duration.millis(GameConfig.enemyTickMillis(gameState.getRound())), e -> updateEnemies()));
+        enemyLoop = new Timeline(new KeyFrame(Duration.millis(GameConfig.enemyTickMillis(session.getGameState().getRound())), e -> updateEnemies()));
         enemyLoop.setCycleCount(Animation.INDEFINITE);
         enemyLoop.play();
     }
 
+    private void startRoundTimerLoop() {
+        if (roundTimerLoop != null) {
+            roundTimerLoop.stop();
+        }
+        roundTimerLoop = new Timeline(new KeyFrame(Duration.millis(100), e -> updateRoundTimer()));
+        roundTimerLoop.setCycleCount(Animation.INDEFINITE);
+        roundTimerLoop.play();
+    }
+
+    private void updateRoundTimer() {
+        if (startScreenActive || session.getGameState().isPaused() || session.getGameState().isGameOver()) {
+            lastRoundTimerTickAt = System.currentTimeMillis();
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (lastRoundTimerTickAt == 0L) {
+            lastRoundTimerTickAt = now;
+        }
+        roundTimerElapsedMillis += Math.max(0L, now - lastRoundTimerTickAt);
+        lastRoundTimerTickAt = now;
+
+        int stepsElapsed = (int) (roundTimerElapsedMillis / GameConfig.ROUND_TIMER_STEP_MILLIS);
+        roundTimerPoints = Math.max(0, GameConfig.ROUND_TIMER_START_POINTS - stepsElapsed * GameConfig.ROUND_TIMER_DECREMENT);
+        updateRoundTimerHud();
+
+        if (roundTimerElapsedMillis >= GameConfig.ROUND_TIMER_TOTAL_MILLIS) {
+            handleRoundTimeout();
+        }
+    }
+
+    private void updateRoundTimerHud() {
+        double fraction = Math.max(0.0, Math.min(1.0, 1.0 - ((double) roundTimerElapsedMillis / GameConfig.ROUND_TIMER_TOTAL_MILLIS)));
+        timerBarFill.setWidth(560 * fraction);
+        if (fraction > 0.5) {
+            timerBarFill.setFill(Color.web("#ffd44f"));
+        } else if (fraction > 0.25) {
+            timerBarFill.setFill(Color.web("#ff9f43"));
+        } else {
+            timerBarFill.setFill(Color.web("#ff5d5d"));
+        }
+
+        int secondsRemaining = (int) Math.max(0, Math.ceil((GameConfig.ROUND_TIMER_TOTAL_MILLIS - roundTimerElapsedMillis) / 1000.0));
+        timerText.setText(roundTimerPoints + " pts  |  " + secondsRemaining + "s");
+    }
+
+    private void stopRoundTimerLoop() {
+        if (roundTimerLoop != null) {
+            roundTimerLoop.stop();
+        }
+    }
+
     private void updateEnemies() {
-        if (gameState.isGameOver() || gameState.isPaused()) {
+        if (playerActor == null || session.getGameState().isGameOver() || session.getGameState().isPaused()) {
             return;
         }
         if (System.currentTimeMillis() < roundStartGraceEndsAt) {
             return;
         }
 
-        for (EnemyActor enemy : enemies) {
-            int[] move = EnemyAi.bestMove(enemy, player, GameConfig.ROWS, GameConfig.COLS, gameState.getRound(), random);
-            enemy.moveBy(move[0], move[1]);
+        boolean collision = session.updateEnemies();
+        List<GridPoint> enemyPositions = session.getEnemies();
+        for (int i = 0; i < enemyActors.size() && i < enemyPositions.size(); i++) {
+            EnemyActor enemy = enemyActors.get(i);
+            GridPoint enemyPosition = enemyPositions.get(i);
+            enemy.setPosition(enemyPosition.row(), enemyPosition.col());
             animateMove(
                     enemy.getSprite(),
-                    enemy.getCol() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0,
-                    enemy.getRow() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0
+                    enemyPosition.col() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0,
+                    enemyPosition.row() * GameConfig.CELL_SIZE + GameConfig.CELL_SIZE / 2.0
             );
         }
 
-        checkCollisions();
-    }
-
-    private boolean inBounds(int row, int col) {
-        return row >= 0 && row < GameConfig.ROWS && col >= 0 && col < GameConfig.COLS;
-    }
-
-    private void checkCollisions() {
-        for (EnemyActor enemy : enemies) {
-            if (enemy.getRow() == player.getRow() && enemy.getCol() == player.getCol()) {
-                soundEngine.playCaught();
-                endGame("A Troggle Got You");
-                return;
-            }
+        if (collision) {
+            soundEngine.playCaught();
+            endGame("A Troggle Got You");
         }
     }
 
@@ -490,32 +964,51 @@ public class NumberMunchersApp extends Application {
         if (enemyLoop != null) {
             enemyLoop.stop();
         }
-        gameState.advanceRoundWithBonus();
+        stopRoundTimerLoop();
+        session.getGameState().addScore(roundTimerPoints);
+        session.advanceRound();
+        persistCurrentPlayerProgress();
         updateHud();
-        showMessage("Round Cleared!", Color.web("#9dffbe"), this::startRound);
+        showMessage("Round Cleared! +" + roundTimerPoints, Color.web("#9dffbe"), this::startRound);
+    }
+
+    private void handleRoundTimeout() {
+        if (session.getGameState().isGameOver()) {
+            return;
+        }
+        if (enemyLoop != null) {
+            enemyLoop.stop();
+        }
+        stopRoundTimerLoop();
+        session.setPaused(false);
+        updateHud();
+        showMessage("Time Up! Retry Round", Color.web("#ffd37a"), this::startRound);
     }
 
     private void endGame(String text) {
         if (enemyLoop != null) {
             enemyLoop.stop();
         }
-        gameState.setGameOver(true);
-        gameState.setPaused(false);
+        stopRoundTimerLoop();
+        session.setGameOver(true);
+        session.setPaused(false);
+        persistCurrentPlayerProgress();
         showMessage(text + " - Press Enter", Color.web("#ffd3d3"), null);
         updateHud();
     }
 
     private void resetGame() {
-        gameState.reset();
-        random = new Random(seed);
+        session.reset(seed);
+        soundEngine.playGameplayMusic();
         startRound();
     }
 
     private void setPaused(boolean paused) {
-        if (gameState.isGameOver()) {
+        if (session.getGameState().isGameOver()) {
             return;
         }
-        gameState.setPaused(paused);
+        session.setPaused(paused);
+        lastRoundTimerTickAt = System.currentTimeMillis();
         if (paused) {
             showMessage("Paused", Color.web("#fff1a8"), null);
         } else {
@@ -542,9 +1035,11 @@ public class NumberMunchersApp extends Application {
     }
 
     private void updateHud() {
+        GameState gameState = session.getGameState();
         scoreText.setText("Score: " + gameState.getScore());
         livesText.setText("Lives: " + gameState.getLives() + (gameState.isPaused() ? " | Paused" : ""));
         roundText.setText("Round: " + gameState.getRound() + " | Targets Left: " + gameState.getEdibleRemaining());
+        playerText.setText("Muncher: " + getSelectedPlayerName());
     }
 
     private void animateMove(Group node, double targetX, double targetY) {
@@ -582,11 +1077,31 @@ public class NumberMunchersApp extends Application {
             case "state":
                 events.add("state_snapshot_returned");
                 return okResponse(command, previous, events);
+            case "show-start-screen":
+                showStartScreen();
+                events.add("front_screen_shown");
+                return okResponse(command, previous, events);
             case "reset":
                 resetGame();
                 events.add("round_reset");
                 events.add("seed_reapplied");
                 events.add("grace_period_active_until_" + enemyMovementEnabledAt);
+                return okResponse(command, previous, events);
+            case "front-next":
+                moveFrontSelection(1);
+                events.add("front_selection_advanced");
+                return okResponse(command, previous, events);
+            case "front-prev":
+                moveFrontSelection(-1);
+                events.add("front_selection_reversed");
+                return okResponse(command, previous, events);
+            case "front-confirm":
+                confirmFrontSelection();
+                events.add("front_selection_confirmed");
+                return okResponse(command, previous, events);
+            case "front-back":
+                backFrontSelection();
+                events.add("front_selection_backed_out");
                 return okResponse(command, previous, events);
             case "set-seed":
                 String rawSeed = params.get("seed");
@@ -599,7 +1114,7 @@ public class NumberMunchersApp extends Application {
                     resetGame();
                     events.add("game_reset_after_seed_change");
                 } else {
-                    random = new Random(seed);
+                    session.reseed(seed);
                     events.add("rng_reseeded_without_reset");
                 }
                 events.add("seed_set_to_" + seed);
@@ -621,20 +1136,20 @@ public class NumberMunchersApp extends Application {
                 events.add("resumed");
                 return okResponse(command, previous, events);
             case "toggle-pause":
-                setPaused(!gameState.isPaused());
+                setPaused(!session.getGameState().isPaused());
                 events.add("pause_toggled");
                 return okResponse(command, previous, events);
             case "tick-enemies":
                 int ticks = parseInt(params.getOrDefault("count", "1"), 1, 100);
-                boolean pausedBefore = gameState.isPaused();
-                gameState.setPaused(false);
+                boolean pausedBefore = session.getGameState().isPaused();
+                session.setPaused(false);
                 for (int i = 0; i < ticks; i++) {
                     updateEnemies();
-                    if (gameState.isGameOver()) {
+                    if (session.getGameState().isGameOver()) {
                         break;
                     }
                 }
-                gameState.setPaused(pausedBefore);
+                session.setPaused(pausedBefore);
                 updateHud();
                 events.add("enemy_ticks_applied_" + ticks);
                 return okResponse(command, previous, events);
@@ -663,8 +1178,10 @@ public class NumberMunchersApp extends Application {
 
     String debugStateJson() {
         lastStateTimestamp = System.currentTimeMillis();
+        GameState gameState = session.getGameState();
         StringBuilder boardJson = new StringBuilder();
         boardJson.append('[');
+        BoardCell[][] board = session.getBoard();
         for (int row = 0; row < GameConfig.ROWS; row++) {
             if (row > 0) {
                 boardJson.append(',');
@@ -689,22 +1206,33 @@ public class NumberMunchersApp extends Application {
 
         StringBuilder enemiesJson = new StringBuilder();
         enemiesJson.append('[');
+        List<GridPoint> enemies = session.getEnemies();
         for (int i = 0; i < enemies.size(); i++) {
-            EnemyActor enemy = enemies.get(i);
+            GridPoint enemy = enemies.get(i);
             if (i > 0) {
                 enemiesJson.append(',');
             }
             enemiesJson.append('{')
-                    .append("\"row\":").append(enemy.getRow()).append(',')
-                    .append("\"col\":").append(enemy.getCol())
+                    .append("\"row\":").append(enemy.row()).append(',')
+                    .append("\"col\":").append(enemy.col())
                     .append('}');
         }
         enemiesJson.append(']');
 
         long now = lastStateTimestamp;
-        boolean roundIntroActive = now < enemyMovementEnabledAt;
-        boolean enemyAiActive = !gameState.isGameOver() && !gameState.isPaused() && !roundIntroActive;
-        boolean acceptingInput = player != null && !gameState.isGameOver() && !gameState.isPaused();
+        GridPoint playerPosition = session.getPlayerPosition();
+        boolean roundIntroActive = !startScreenActive && playerPosition != null && now < enemyMovementEnabledAt;
+        boolean enemyAiActive = !startScreenActive && playerPosition != null && !gameState.isGameOver() && !gameState.isPaused() && !roundIntroActive;
+        boolean acceptingInput = !startScreenActive && playerPosition != null && !gameState.isGameOver() && !gameState.isPaused();
+        int playerRow = playerPosition == null ? -1 : playerPosition.row();
+        int playerCol = playerPosition == null ? -1 : playerPosition.col();
+        long effectiveRoundStartedAt = startScreenActive ? 0 : roundStartedAt;
+        long effectiveEnemyMovementEnabledAt = startScreenActive ? 0 : enemyMovementEnabledAt;
+        long millisecondsSinceRoundStart = effectiveRoundStartedAt == 0 ? 0 : Math.max(0, now - effectiveRoundStartedAt);
+        long millisecondsUntilEnemyMovement = effectiveEnemyMovementEnabledAt == 0 ? 0 : Math.max(0, effectiveEnemyMovementEnabledAt - now);
+        int effectiveRoundTimerPoints = startScreenActive ? 0 : roundTimerPoints;
+        long effectiveRoundTimerElapsed = startScreenActive ? 0L : roundTimerElapsedMillis;
+        double roundTimerFraction = startScreenActive ? 0.0 : Math.max(0.0, Math.min(1.0, 1.0 - ((double) roundTimerElapsedMillis / GameConfig.ROUND_TIMER_TOTAL_MILLIS)));
 
         return "{"
                 + "\"title\":\"" + escapeJson("Number Munchers Deluxe") + "\","
@@ -715,22 +1243,29 @@ public class NumberMunchersApp extends Application {
                 + "\"seed\":" + seed + ","
                 + "\"debug_port\":" + debugPort + ","
                 + "\"state_timestamp\":" + now + ","
-                + "\"round_started_at\":" + roundStartedAt + ","
-                + "\"enemy_movement_enabled_at\":" + enemyMovementEnabledAt + ","
-                + "\"milliseconds_since_round_start\":" + Math.max(0, now - roundStartedAt) + ","
-                + "\"milliseconds_until_enemy_movement\":" + Math.max(0, enemyMovementEnabledAt - now) + ","
+                + "\"round_started_at\":" + effectiveRoundStartedAt + ","
+                + "\"enemy_movement_enabled_at\":" + effectiveEnemyMovementEnabledAt + ","
+                + "\"milliseconds_since_round_start\":" + millisecondsSinceRoundStart + ","
+                + "\"milliseconds_until_enemy_movement\":" + millisecondsUntilEnemyMovement + ","
+                + "\"round_timer_elapsed_millis\":" + effectiveRoundTimerElapsed + ","
+                + "\"round_timer_points\":" + effectiveRoundTimerPoints + ","
+                + "\"round_timer_fraction\":" + roundTimerFraction + ","
                 + "\"score\":" + gameState.getScore() + ","
                 + "\"lives\":" + gameState.getLives() + ","
                 + "\"round\":" + gameState.getRound() + ","
                 + "\"edible_remaining\":" + gameState.getEdibleRemaining() + ","
+                + "\"start_screen_active\":" + startScreenActive + ","
+                + "\"front_screen_mode\":\"" + frontScreenMode.name().toLowerCase() + "\","
+                + "\"title_menu_selection\":\"" + escapeJson(titleMenuSelectionLabel()) + "\","
+                + "\"selected_player\":\"" + escapeJson(getSelectedPlayerName()) + "\","
                 + "\"game_over\":" + gameState.isGameOver() + ","
                 + "\"paused\":" + gameState.isPaused() + ","
                 + "\"accepting_input\":" + acceptingInput + ","
                 + "\"window_focused\":" + isWindowFocused() + ","
                 + "\"round_intro_active\":" + roundIntroActive + ","
                 + "\"enemy_ai_active\":" + enemyAiActive + ","
-                + "\"rule\":\"" + escapeJson(rule == null ? "" : rule.getDescription()) + "\","
-                + "\"player\":{\"row\":" + player.getRow() + ",\"col\":" + player.getCol() + "},"
+                + "\"rule\":\"" + escapeJson(session.getCurrentRule() == null ? "" : session.getCurrentRule().getDescription()) + "\","
+                + "\"player\":{\"row\":" + playerRow + ",\"col\":" + playerCol + "},"
                 + "\"enemies\":" + enemiesJson + ","
                 + "\"board\":" + boardJson + ","
                 + "\"layout\":" + layoutJson() + ","
@@ -813,6 +1348,8 @@ public class NumberMunchersApp extends Application {
     }
 
     private StateSummary captureStateSummary() {
+        GameState gameState = session.getGameState();
+        GridPoint playerPosition = session.getPlayerPosition();
         return new StateSummary(
                 gameState.getScore(),
                 gameState.getLives(),
@@ -820,8 +1357,8 @@ public class NumberMunchersApp extends Application {
                 gameState.getEdibleRemaining(),
                 gameState.isPaused(),
                 gameState.isGameOver(),
-                player == null ? -1 : player.getRow(),
-                player == null ? -1 : player.getCol()
+                playerPosition == null ? -1 : playerPosition.row(),
+                playerPosition == null ? -1 : playerPosition.col()
         );
     }
 
@@ -840,6 +1377,44 @@ public class NumberMunchersApp extends Application {
 
     private boolean isWindowFocused() {
         return stage != null && stage.isFocused();
+    }
+
+    private void toggleFullScreen() {
+        if (stage == null) {
+            return;
+        }
+        boolean next = !stage.isFullScreen();
+        stage.setFullScreen(next);
+        if (!next) {
+            stage.setMaximized(true);
+        }
+    }
+
+    private String getSelectedPlayerName() {
+        return PLAYER_OPTIONS.get(selectedPlayerIndex);
+    }
+
+    private void persistCurrentPlayerProgress() {
+        GameState gameState = session.getGameState();
+        progressStore.recordProgress(getSelectedPlayerName(), gameState.getScore(), gameState.getRound());
+    }
+
+    private String playerProgressSummary(String playerName) {
+        PlayerProgress progress = progressStore.getProgress(playerName);
+        return playerName + "  ·  BEST: " + progress.topScore() + "  ·  MAX LVL: " + progress.maxLevelReached();
+    }
+    private String titleMenuSelectionLabel() {
+        return switch (titleMenuIndex) {
+            case 0 -> "START GAME";
+            case 1 -> "PLAYER SELECT";
+            default -> "QUIT";
+        };
+    }
+
+
+    private enum FrontScreenMode {
+        TITLE,
+        PLAYER_SELECT
     }
 
     private static long parseLong(String value, long fallback) {
@@ -900,6 +1475,13 @@ public class NumberMunchersApp extends Application {
         if (debugServer != null) {
             debugServer.stop();
         }
+        stopRoundTimerLoop();
+        if (frontScreenPulse != null) {
+            frontScreenPulse.stop();
+        }
+        if (!startScreenActive) {
+            persistCurrentPlayerProgress();
+        }
         soundEngine.shutdown();
     }
 
@@ -907,3 +1489,15 @@ public class NumberMunchersApp extends Application {
         launch(args);
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+

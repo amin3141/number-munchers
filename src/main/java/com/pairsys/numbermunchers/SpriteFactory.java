@@ -1,76 +1,123 @@
 package com.pairsys.numbermunchers;
 
 import javafx.scene.Group;
+import javafx.geometry.Rectangle2D;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.Arc;
-import javafx.scene.shape.ArcType;
 import javafx.scene.shape.Circle;
-import javafx.scene.shape.Polygon;
-import javafx.scene.shape.Rectangle;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.util.Duration;
 
 public final class SpriteFactory {
+    private static final double PLAYER_SCALE = 4.8;
+    private static final double ENEMY_SCALE = 4.2;
+    private static final int FRAME_SIZE = 16;
+    private static final Map<String, Image> IMAGE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, String> PLAYER_SHEETS = Map.ofEntries(
+            Map.entry("Hamza", "/sprites/players/Blue_16x16RetroCharacterMidTone.png"),
+            Map.entry("Yusef", "/sprites/players/Green_16x16RetroCharacterMidTone.png"),
+            Map.entry("Mohammed", "/sprites/players/Orange_16x16RetroCharacterMidTone.png"),
+            Map.entry("Abeera", "/sprites/players/Lavender_16x16RetroCharacterMidTone.png"),
+            Map.entry("Amina", "/sprites/players/Coral_16x16RetroCharacterMidTone.png"),
+            Map.entry("Mariam", "/sprites/players/Teal_16x16RetroCharacterMidTone.png"),
+            Map.entry("Mustafa", "/sprites/players/Red_16x16RetroCharacterMidTone.png"),
+            Map.entry("Zahra", "/sprites/players/Purple_16x16RetroCharacterMidTone.png"),
+            Map.entry("Zhaley", "/sprites/players/Yellow_16x16RetroCharacterMidTone.png"),
+            Map.entry("Palwasha", "/sprites/players/White_16x16RetroCharacterMidTone.png"),
+            Map.entry("Zarghuna", "/sprites/players/Brown_16x16RetroCharacterMidTone.png")
+    );
+    private static final List<String> ENEMY_STRIPS = List.of(
+            "/sprites/enemies/BlueCat.png",
+            "/sprites/enemies/CoralCat.png",
+            "/sprites/enemies/GreenCat.png",
+            "/sprites/enemies/PurpleCat.png",
+            "/sprites/enemies/RedCat.png",
+            "/sprites/enemies/TealCat.png",
+            "/sprites/enemies/YellowCat.png"
+    );
+
     private SpriteFactory() {
     }
 
-    public static Group createPlayerSprite() {
-        Circle body = new Circle(0, 0, 22, Color.web("#ffe15a"));
-        body.setStroke(Color.web("#8a651f"));
-        body.setStrokeWidth(2.4);
-
-        Circle leftEye = new Circle(-7, -5, 3.1, Color.BLACK);
-        Circle rightEye = new Circle(7, -5, 3.1, Color.BLACK);
-        Circle leftShine = new Circle(-8.2, -6.1, 1.0, Color.WHITE);
-        Circle rightShine = new Circle(5.8, -6.1, 1.0, Color.WHITE);
-
-        Arc mouth = new Arc(0, 5, 11, 9, 205, 130);
-        mouth.setType(ArcType.OPEN);
-        mouth.setStrokeWidth(3.0);
-        mouth.setStroke(Color.web("#77322f"));
-        mouth.setFill(Color.TRANSPARENT);
-
-        Rectangle shoeLeft = new Rectangle(-13, 19, 10, 6);
-        shoeLeft.setFill(Color.web("#c05742"));
-        Rectangle shoeRight = new Rectangle(3, 19, 10, 6);
-        shoeRight.setFill(Color.web("#c05742"));
-
-        Group group = new Group(body, leftEye, rightEye, leftShine, rightShine, mouth, shoeLeft, shoeRight);
+    public static Group createPlayerSprite(String playerName) {
+        String resource = PLAYER_SHEETS.getOrDefault(playerName, PLAYER_SHEETS.get("Hamza"));
+        ImageView sprite = createSheetFrame(resource, 0, 0, PLAYER_SCALE);
+        Circle glow = new Circle(0, 0, 24, Color.web("#ffffff22"));
+        Group group = new Group(glow, sprite);
+        playTwoFrameAnimation(group, sprite, resource, 0, 0, 1, 430);
         group.setUserData("actor");
         return group;
     }
 
     public static Group createEnemySprite(int index) {
-        Color[] tones = new Color[] {
-                Color.web("#fe6b8b"), Color.web("#ff9f59"), Color.web("#8f8aff"),
-                Color.web("#73d4ff"), Color.web("#f66dff"), Color.web("#6ae0a7"), Color.web("#ff7b7b")
-        };
-        Color tone = tones[index % tones.length];
-
-        Circle body = new Circle(0, 0, 20, tone);
-        body.setStroke(Color.web("#2a1f2f"));
-        body.setStrokeWidth(2.1);
-
-        Polygon spikes = new Polygon(
-                -18.0, -8.0, -27.0, -1.0, -17.0, 4.0,
-                -10.0, 20.0, -2.0, 9.0, 9.0, 23.0,
-                13.0, 8.0, 24.0, 13.0, 19.0, 1.0,
-                30.0, -7.0, 16.0, -8.0, 11.0, -21.0,
-                2.0, -11.0, -9.0, -23.0
-        );
-        spikes.setFill(tone.deriveColor(0, 1, 0.85, 1));
-        spikes.setOpacity(0.7);
-
-        Circle leftEye = new Circle(-7, -3, 4, Color.WHITE);
-        Circle rightEye = new Circle(7, -3, 4, Color.WHITE);
-        Circle leftPupil = new Circle(-6.5, -2.4, 1.6, Color.BLACK);
-        Circle rightPupil = new Circle(6.5, -2.4, 1.6, Color.BLACK);
-
-        Arc grin = new Arc(0, 7, 9, 6, 195, 150);
-        grin.setStroke(Color.web("#401823"));
-        grin.setStrokeWidth(2.2);
-        grin.setFill(Color.TRANSPARENT);
-
-        Group group = new Group(spikes, body, leftEye, rightEye, leftPupil, rightPupil, grin);
+        String resource = ENEMY_STRIPS.get(index % ENEMY_STRIPS.size());
+        ImageView sprite = createStripFrame(resource, 0, ENEMY_SCALE);
+        Circle shadow = new Circle(0, 0, 22, Color.web("#00000022"));
+        Group group = new Group(shadow, sprite);
+        playStripAnimation(group, sprite, resource, 7, 120 + index * 12L);
         group.setUserData("actor");
         return group;
+    }
+
+    private static ImageView createSheetFrame(String resourcePath, int row, int col, double scale) {
+        ImageView view = baseImageView(loadImage(resourcePath), scale);
+        view.setViewport(new Rectangle2D(col * FRAME_SIZE, row * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE));
+        return view;
+    }
+
+    private static ImageView createStripFrame(String resourcePath, int frame, double scale) {
+        ImageView view = baseImageView(loadImage(resourcePath), scale);
+        view.setViewport(new Rectangle2D(frame * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE));
+        return view;
+    }
+
+    private static ImageView baseImageView(Image image, double scale) {
+        ImageView view = new ImageView(image);
+        double size = FRAME_SIZE * scale;
+        view.setFitWidth(size);
+        view.setFitHeight(size);
+        view.setPreserveRatio(false);
+        view.setSmooth(false);
+        view.setLayoutX(-size / 2.0);
+        view.setLayoutY(-size / 2.0);
+        return view;
+    }
+
+    private static Image loadImage(String resourcePath) {
+        return IMAGE_CACHE.computeIfAbsent(resourcePath, path -> new Image(SpriteFactory.class.getResource(path).toExternalForm()));
+    }
+
+    private static void playTwoFrameAnimation(Group group, ImageView sprite, String resourcePath, int row, int colA, int colB, long durationMillis) {
+        Timeline timeline = new Timeline(
+                new KeyFrame(Duration.ZERO, e -> sprite.setViewport(new Rectangle2D(colA * FRAME_SIZE, row * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE))),
+                new KeyFrame(Duration.millis(durationMillis), e -> sprite.setViewport(new Rectangle2D(colB * FRAME_SIZE, row * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE)))
+        );
+        timeline.setCycleCount(Animation.INDEFINITE);
+        timeline.setAutoReverse(true);
+        timeline.play();
+        group.getProperties().put("animation", timeline);
+        group.getProperties().put("sheet", resourcePath);
+    }
+
+    private static void playStripAnimation(Group group, ImageView sprite, String resourcePath, int frameCount, long frameDurationMillis) {
+        Timeline timeline = new Timeline();
+        for (int i = 0; i < frameCount; i++) {
+            final int frame = i;
+            timeline.getKeyFrames().add(
+                    new KeyFrame(Duration.millis(frameDurationMillis * i),
+                            e -> sprite.setViewport(new Rectangle2D(frame * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE)))
+            );
+        }
+        timeline.setCycleCount(Animation.INDEFINITE);
+        timeline.play();
+        group.getProperties().put("animation", timeline);
+        group.getProperties().put("sheet", resourcePath);
     }
 }

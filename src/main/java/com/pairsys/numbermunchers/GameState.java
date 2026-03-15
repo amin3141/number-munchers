@@ -46,7 +46,7 @@ public final class GameState {
 
     public void onCorrectMunch() {
         edibleRemaining--;
-        score += 50 + round * 7;
+        score += 200;
     }
 
     public void onWrongMunch() {
@@ -56,7 +56,10 @@ public final class GameState {
 
     public void advanceRoundWithBonus() {
         round++;
-        score += 180 + round * 25;
+    }
+
+    public void addScore(int points) {
+        score += Math.max(0, points);
     }
 
     public void reset() {

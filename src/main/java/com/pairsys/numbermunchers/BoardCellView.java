@@ -8,6 +8,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
 
 public final class BoardCellView {
@@ -17,10 +18,12 @@ public final class BoardCellView {
     private final Text numberText;
     private final Font cellFont;
     private final Font valueFont;
+    private final Font compactValueFont;
 
     public BoardCellView(int row, int col, Font cellFont, Font valueFont) {
         this.cellFont = cellFont;
         this.valueFont = valueFont;
+        this.compactValueFont = Font.font(valueFont.getFamily(), FontWeight.BOLD, 24);
 
         backing = new Rectangle(
                 GameConfig.CELL_SIZE - (GameConfig.CELL_INSET * 2),
@@ -73,8 +76,9 @@ public final class BoardCellView {
         backing.setFill(Color.web("#1b223c"));
         backing.setStroke(Color.web("#54628a"));
         numberText.setFill(Color.web("#d3d7ef"));
-        numberText.setFont(cellFont);
-        numberText.setText(Integer.toString(cell.getValue()));
+        String value = Integer.toString(cell.getValue());
+        numberText.setText(value);
+        numberText.setFont(value.length() >= 3 ? compactValueFont : cellFont);
         textureLayer.setOpacity(0.22);
     }
 
