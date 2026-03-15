@@ -43,9 +43,11 @@ import javafx.util.Duration;
 
 public class NumberMunchersApp extends Application {
     private static final List<String> PLAYER_OPTIONS = List.of(
-            "Hamza", "Yusef", "Mohammed", "Abeera", "Amina", "Mariam",
-            "Mustafa", "Zahra", "Zhaley", "Palwasha", "Zarghuna"
+            "Abeera", "Amina", "Hamza", "Mariam", "Mohammed", "Mustafa",
+            "Palwasha", "Yusef", "Zahra", "Zarghuna", "Zhaley"
     );
+    private static final java.util.prefs.Preferences APP_PREFS =
+            java.util.prefs.Preferences.userRoot().node("com/pairsys/numbermunchers/app");
 
     private long seed;
     private final int debugPort = Integer.getInteger("numberMunchers.debug.port", 8765);
@@ -103,7 +105,13 @@ public class NumberMunchersApp extends Application {
     private boolean startScreenActive = true;
     private FrontScreenMode frontScreenMode = FrontScreenMode.TITLE;
     private int titleMenuIndex = 0;
-    private int selectedPlayerIndex = 0;
+    private int selectedPlayerIndex = loadLastSelectedPlayerIndex();
+
+    private static int loadLastSelectedPlayerIndex() {
+        String lastPlayer = APP_PREFS.get("lastSelectedPlayer", "");
+        int index = PLAYER_OPTIONS.indexOf(lastPlayer);
+        return index >= 0 ? index : 0;
+    }
 
     @Override
     public void start(Stage stage) {
@@ -587,7 +595,16 @@ public class NumberMunchersApp extends Application {
         topBox.setManaged(true);
         startOverlay.setVisible(false);
         startOverlay.setManaged(false);
+        saveLastSelectedPlayer();
         resetGame();
+    }
+
+    private void saveLastSelectedPlayer() {
+        APP_PREFS.put("lastSelectedPlayer", getSelectedPlayerName());
+        try {
+            APP_PREFS.flush();
+        } catch (java.util.prefs.BackingStoreException ignored) {
+        }
     }
 
     private void refreshLeaderboard() {
