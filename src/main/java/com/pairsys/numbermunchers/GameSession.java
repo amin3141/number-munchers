@@ -113,6 +113,7 @@ public final class GameSession {
             return false;
         }
 
+        Set<Integer> occupiedCells = new HashSet<>();
         for (int i = 0; i < enemies.size(); i++) {
             GridPoint enemy = enemies.get(i);
             int[] move = EnemyAi.bestMove(
@@ -125,7 +126,18 @@ public final class GameSession {
                     gameState.getRound(),
                     random
             );
-            enemies.set(i, new GridPoint(enemy.row() + move[0], enemy.col() + move[1]));
+            int newRow = enemy.row() + move[0];
+            int newCol = enemy.col() + move[1];
+            int cellKey = newRow * cols + newCol;
+
+            // If another enemy already moved to this cell, stay in place
+            if (occupiedCells.contains(cellKey)) {
+                cellKey = enemy.row() * cols + enemy.col();
+                newRow = enemy.row();
+                newCol = enemy.col();
+            }
+            occupiedCells.add(cellKey);
+            enemies.set(i, new GridPoint(newRow, newCol));
         }
 
         return hasCollision();

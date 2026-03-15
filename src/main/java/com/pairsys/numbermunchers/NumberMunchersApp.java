@@ -94,6 +94,7 @@ public class NumberMunchersApp extends Application {
     private Stage stage;
     private long roundStartGraceEndsAt;
     private long roundStartedAt;
+    private int lastDisplayedScore;
     private long enemyMovementEnabledAt;
     private long lastStateTimestamp;
     private long roundTimerElapsedMillis;
@@ -121,6 +122,7 @@ public class NumberMunchersApp extends Application {
         stage.setMaximized(true);
         stage.show();
         stage.setFullScreen(true);
+        root.requestFocus();
 
         startDebugServer();
     }
@@ -157,16 +159,34 @@ public class NumberMunchersApp extends Application {
         ruleText.setFont(Font.font("Georgia", FontWeight.BOLD, 24));
         ruleText.setFill(Color.web("#8ae8ff"));
 
-        HBox hud = new HBox(26);
-        scoreText = new Text();
+        // Left side HUD
+        HBox hudLeft = new HBox(26);
+        hudLeft.setAlignment(Pos.CENTER_LEFT);
+
         livesText = new Text();
         roundText = new Text();
         playerText = new Text();
-        for (Text text : Arrays.asList(scoreText, livesText, roundText, playerText)) {
+        for (Text text : Arrays.asList(livesText, roundText, playerText)) {
             text.setFont(hudFont);
             text.setFill(Color.web("#f9f2d4"));
         }
-        hud.getChildren().addAll(scoreText, livesText, roundText, playerText);
+        hudLeft.getChildren().addAll(livesText, roundText, playerText);
+
+        // Arcade-style score display (upper right)
+        Text scoreLabel = new Text("SCORE");
+        scoreLabel.setFont(Font.font("Consolas", FontWeight.BOLD, 16));
+        scoreLabel.setFill(Color.web("#7ad4ff"));
+        scoreText = new Text("0");
+        scoreText.setFont(Font.font("Consolas", FontWeight.BOLD, 48));
+        scoreText.setFill(Color.web("#ffea00"));
+        scoreText.setEffect(new Glow(0.6));
+        VBox scoreBox = new VBox(-2, scoreLabel, scoreText);
+        scoreBox.setAlignment(Pos.CENTER_RIGHT);
+        scoreBox.setPadding(new Insets(0, 20, 0, 0));
+
+        BorderPane hud = new BorderPane();
+        hud.setLeft(hudLeft);
+        hud.setRight(scoreBox);
 
         Text timerLabel = new Text("ROUND TIMER");
         timerLabel.setFont(Font.font("Trebuchet MS", FontWeight.BOLD, 16));
@@ -1144,10 +1164,26 @@ public class NumberMunchersApp extends Application {
 
     private void updateHud() {
         GameState gameState = session.getGameState();
-        scoreText.setText("Score: " + gameState.getScore());
+        int currentScore = gameState.getScore();
+        scoreText.setText(String.format("%,d", currentScore));
+        if (currentScore > lastDisplayedScore && lastDisplayedScore > 0) {
+            pulseScore();
+        }
+        lastDisplayedScore = currentScore;
         livesText.setText("Lives: " + gameState.getLives() + (gameState.isPaused() ? " | Paused" : ""));
         roundText.setText("Round: " + gameState.getRound() + " | Targets Left: " + gameState.getEdibleRemaining());
         playerText.setText("Muncher: " + getSelectedPlayerName());
+    }
+
+    private void pulseScore() {
+        ScaleTransition pulse = new ScaleTransition(Duration.millis(120), scoreText);
+        pulse.setFromX(1.0);
+        pulse.setFromY(1.0);
+        pulse.setToX(1.25);
+        pulse.setToY(1.25);
+        pulse.setCycleCount(2);
+        pulse.setAutoReverse(true);
+        pulse.play();
     }
 
     private void animateMove(Group node, double targetX, double targetY) {
