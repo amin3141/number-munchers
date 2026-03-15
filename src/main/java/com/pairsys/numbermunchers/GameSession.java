@@ -237,7 +237,18 @@ public final class GameSession {
 
     private void spawnEnemies(int enemyCount) {
         Set<Integer> occupied = new HashSet<>();
-        occupied.add(playerPosition.row() * cols + playerPosition.col());
+        // Mark player position and all adjacent cells as off-limits
+        int pRow = playerPosition.row();
+        int pCol = playerPosition.col();
+        for (int dr = -1; dr <= 1; dr++) {
+            for (int dc = -1; dc <= 1; dc++) {
+                int r = pRow + dr;
+                int c = pCol + dc;
+                if (r >= 0 && r < rows && c >= 0 && c < cols) {
+                    occupied.add(r * cols + c);
+                }
+            }
+        }
 
         while (enemies.size() < enemyCount) {
             int row = random.nextInt(rows);
